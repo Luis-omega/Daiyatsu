@@ -1,0 +1,5 @@
+#binop_separator="Front"
+#blank_lines_lower_bound=2
+#blank_lines_upper_bound=5
+#brace_style="PreferSameLine"
+max_width=80
