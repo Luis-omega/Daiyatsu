@@ -135,7 +135,7 @@ impl Grammar {
 
     pub fn from_table(
         raw_grammar: &HashMap<String, Vec<Vec<String>>>,
-    ) -> Result<(Grammar, SymbolsRegistry), GrammarError> {
+    ) -> Result<Grammar, GrammarError> {
         let (registry, raw_rules) = SymbolsRegistry::make(raw_grammar);
         let mut rules: Vec<Rule> = Vec::new();
         let mut errors: Vec<GrammarError> = Vec::new();
@@ -162,7 +162,7 @@ impl Grammar {
 
     pub fn from_vector(
         raw_grammar: Vec<(&str, Vec<Vec<&str>>)>,
-    ) -> Result<(Grammar, SymbolsRegistry), GrammarError> {
+    ) -> Result<Grammar, GrammarError> {
         let mut dic = HashMap::new();
         for (name, productions) in raw_grammar.into_iter() {
             let new_name = String::from(name);

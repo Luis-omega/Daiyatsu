@@ -40,7 +40,7 @@ impl Symbol {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct SymbolsRegistry {
     vec: Vec<String>,
     dic: HashMap<String, usize>,
@@ -61,9 +61,9 @@ impl SymbolsRegistry {
         // This is important since grammar expects us
         // to provide only the non terminals and consider all
         // other symbols as terminals.
+        // we want to guarantee the order of the elements of v.
         for (name, rule) in raw {
             r.insert(name);
-            // we want to guarantee the order of the elements
             v.push(rule.clone());
         }
         let out = v
