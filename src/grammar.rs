@@ -234,6 +234,23 @@ impl FirstSets {
         }
         FirstSets { sets: v }
     }
+
+    pub fn into_hash_set(&self) -> HashMap<Symbol, HashSet<Symbol>> {
+        self.sets
+            .iter()
+            .enumerate()
+            .map(|(name_id, hash_set)| {
+                let symbol = Symbol::Id(name_id);
+                (symbol, hash_set.clone())
+            })
+            .collect()
+    }
+}
+
+impl Into<HashMap<Symbol, HashSet<Symbol>>> for FirstSets {
+    fn into(self) -> HashMap<Symbol, HashSet<Symbol>> {
+        self.into_hash_set()
+    }
 }
 
 #[inline]
@@ -380,6 +397,31 @@ mod tests {
     use paste::paste;
     use test_grammars::*;
 
+    pub fn first_sets_from_vec(
+        grammar: &Grammar,
+        v: Vec<(&str, Vec<&str>)>,
+    ) -> Option<HashMap<Symbol, HashSet<Symbol>>> {
+        v.into_iter()
+            .map(|(name, name_dic)| {
+                let name_symbol =
+                    grammar.registry.solve_name(&String::from(name))?;
+                let hash_dic = name_dic
+                    .into_iter()
+                    .map(|x| grammar.registry.solve_name(&String::from(x)))
+                    .collect::<Option<HashSet<Symbol>>>()?;
+                Some((name_symbol, hash_dic))
+            })
+            .collect::<Option<HashMap<Symbol, HashSet<Symbol>>>>()
+    }
+
+    macro_rules! make_first_sets {
+        ($($name:literal : $($item:literal)* ),*) => {
+            {
+                vec![$( ($name,vec![$($item,)*]), )*]
+            }
+        };
+    }
+
     macro_rules! make_nullable_test {
         ($name:tt, $raw_grammar:expr, $raw_nulls:expr)=> {
             paste! {
@@ -400,30 +442,40 @@ mod tests {
         }
     }
 
-    macro_rules! make_nullable_test_from_static {
-        ($name:tt, $static_name:tt, $raw_nulls:expr) => {
+    macro_rules! make_test_from_static {
+        ($name:tt, $static_name:tt, $raw_nulls:expr,$raw_first:expr) => {
             paste! {
 
             #[test]
-            fn [< test_nullable_ $name >](){
+            fn [< test_ $name >](){
                 let grammar = &*$static_name;
-                let expected = grammar.registry.make_set($raw_nulls).expect("can't create expected set");
+                let expected_nullables = grammar.registry.make_set($raw_nulls).expect("can't create expected set");
                 let nullables = compute_nullables(&grammar);
                 assert!(
-                    nullables == expected,
+                    nullables == expected_nullables,
                     "nullables = {:?}, expected = {:?}",
                     nullables,
-                    expected
+                    expected_nullables
+                );
+                let first_sets_as_hash = compute_first_sets(&nullables, grammar).into_hash_set();
+                let expected_firsts = first_sets_from_vec(grammar, $raw_first).expect("cant compute first sets");
+                assert!(
+                    first_sets_as_hash == expected_firsts,
+                    "nullables = {:?}, expected = {:?}",
+                    first_sets_as_hash,
+                    expected_firsts
                 )
+
                 }
             }
         };
     }
 
-    make_nullable_test_from_static!(
+    make_test_from_static!(
         empty_grammar,
         EMPTY_GRAMMAR,
-        vec!["Empty",]
+        vec!["Empty",],
+        make_first_sets![]
     );
 
     make_nullable_test!(
@@ -452,9 +504,10 @@ mod tests {
         vec!["Empty", "maybe_comma", "maybe_separator"]
     );
 
-    make_nullable_test_from_static!(
-        math_grammar_dont_have_empty,
+    make_test_from_static!(
+        math_grammar,
         MATH_GRAMMAR,
-        vec!["Empty"]
+        vec!["Empty"],
+        make_first_sets!["expr": "LParen" "Nat", "factor": "LParen" "Nat","atom":"LParen" "Nat"]
     );
 }
