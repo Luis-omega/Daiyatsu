@@ -346,37 +346,32 @@ pub fn compute_first_sets(
     FirstSets { sets: out }
 }
 
+macro_rules! make_grammar {
+    ($($key:literal : $($($item:literal)+)|+),+) => {
+
+        {
+            let v : Vec<(&str,Vec<Vec<&str>>)> = vec![$( ($key, vec![$( vec![$( $item, )+], )+]),  )+];
+            Grammar::from_vector(v)
+        }
+
+    };
+}
+
 pub mod test_grammars {
     use super::*;
     use std::sync::LazyLock;
-    pub static EMPTY_GRAMMAR: LazyLock<(Grammar, SymbolsRegistry)> =
-        LazyLock::new(|| {
-            Grammar::from_vector(vec![]).expect("can't create grammar!")
-        });
+    pub static EMPTY_GRAMMAR: LazyLock<Grammar> = LazyLock::new(|| {
+        Grammar::from_vector(vec![]).expect("can't create grammar!")
+    });
 
-    pub static MATH_GRAMMAR: LazyLock<(Grammar, SymbolsRegistry)> =
-        LazyLock::new(|| {
-            Grammar::from_vector(vec![
-                (
-                    "expr",
-                    vec![
-                        vec!["expr", "Plus", "factor"],
-                        vec!["expr", "Minus", "factor"],
-                        vec!["factor"],
-                    ],
-                ),
-                (
-                    "factor",
-                    vec![
-                        vec!["atom", "Start", "atom"],
-                        vec!["atom", "Div", "atom"],
-                        vec!["atom"],
-                    ],
-                ),
-                ("atom", vec![vec!["Nat"], vec!["LParen", "atom", "RParen"]]),
-            ])
-            .expect("can't create grammar!")
-        });
+    pub static MATH_GRAMMAR: LazyLock<Grammar> = LazyLock::new(|| {
+        make_grammar! {
+            "expr" : "expr" "Plus" "factor" | "expr" "Minus" "factor" | "factor"
+            ,"factor" : "atom" "Star" "atom" | "atom" "Div" "atom" | "atom"
+            ,"atom" : "Nat" | "LParen" "atom" "RParen"
+        }
+        .expect("can't create grammar!")
+    });
 }
 
 #[cfg(test)]
