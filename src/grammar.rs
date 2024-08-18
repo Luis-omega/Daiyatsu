@@ -45,6 +45,20 @@ impl Production {
             None => Err(GrammarError::EmptyProduction(raw_name.clone())),
         }
     }
+
+    pub fn to_string(&self, table: &SymbolsRegistry) -> Option<String> {
+        let name = table.solve_id(self.name)?;
+        let productions: Vec<&str> = self
+            .values
+            .iter()
+            .map(|symbol| table.solve_symbol(*symbol))
+            .collect::<Option<Vec<_>>>()?
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+        let rendered_production = productions.join(" ");
+        Some(format!("{} : {}", name, rendered_production))
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -94,15 +108,25 @@ impl Rule {
             }
         }
     }
+
+    pub fn to_string(&self, table: &SymbolsRegistry) -> Option<String> {
+        let acc: Vec<String> = self
+            .productions
+            .iter()
+            .map(|i| i.to_string(table))
+            .collect::<Option<Vec<_>>>()?;
+        Some(acc.join(";\n"))
+    }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Grammar {
     /// A [Symbol::Id] maps directly to element of this
     /// vector [Grammar::rules] if they are non terminals,
     /// otherwise they are terminals.
     rules: Vec<Rule>,
     len: usize,
+    registry: SymbolsRegistry,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -152,7 +176,11 @@ impl Grammar {
         }
         if errors.len() == 0 {
             let len = rules.len();
-            Ok((Grammar { rules, len }, registry))
+            Ok(Grammar {
+                rules,
+                len,
+                registry,
+            })
         } else if errors.len() == 1 {
             Err(errors.remove(0))
         } else {
@@ -177,6 +205,15 @@ impl Grammar {
             dic.insert(new_name, rule);
         }
         Grammar::from_table(&dic)
+    }
+
+    pub fn to_string(&self) -> Option<String> {
+        let acc: Vec<String> = self
+            .rules
+            .iter()
+            .map(|i| i.to_string(&self.registry))
+            .collect::<Option<Vec<_>>>()?;
+        Some(acc.join("\n"))
     }
 }
 
@@ -347,14 +384,15 @@ mod tests {
     use super::*;
     use paste::paste;
     use test_grammars::*;
+
     macro_rules! make_nullable_test {
         ($name:tt, $raw_grammar:expr, $raw_nulls:expr)=> {
             paste! {
 
             #[test]
             fn [< test_nullable_ $name >](){
-                let (grammar, registry) = Grammar::from_vector($raw_grammar).expect("can't create grammar!");
-                let expected = registry.make_set($raw_nulls).expect("can't create expected set");
+                let grammar = Grammar::from_vector($raw_grammar).expect("can't create grammar!");
+                let expected = grammar.registry.make_set($raw_nulls).expect("can't create expected set");
                 let nullables = compute_nullables(&grammar);
                 assert!(
                     nullables == expected,
@@ -373,8 +411,8 @@ mod tests {
 
             #[test]
             fn [< test_nullable_ $name >](){
-                let (grammar, registry) = &*$static_name;
-                let expected = registry.make_set($raw_nulls).expect("can't create expected set");
+                let grammar = &*$static_name;
+                let expected = grammar.registry.make_set($raw_nulls).expect("can't create expected set");
                 let nullables = compute_nullables(&grammar);
                 assert!(
                     nullables == expected,
