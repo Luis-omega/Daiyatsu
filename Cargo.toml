@@ -5,6 +5,8 @@ edition = "2021"
 
 [dependencies]
 itertools = "0.13.0"
+log = "0.4.22"
 
 [dev-dependencies]
 paste = "1.0.15"
+simple_logger = "5.0.0"

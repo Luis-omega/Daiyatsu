@@ -8,6 +8,8 @@ use std::{
 use crate::symbols::Symbol;
 use crate::{one_or_more::OneOrMore, symbols::SymbolsRegistry};
 
+use log::debug;
+
 /// This module implements the core types to be
 /// used to build a parser generator engine based in a BNF grammar.
 ///
@@ -227,11 +229,7 @@ pub struct FirstSets {
 
 impl FirstSets {
     pub fn new(grammar: &Grammar) -> Self {
-        let grammar_len = grammar.len;
-        let mut v = Vec::with_capacity(grammar_len);
-        for i in 0usize..grammar_len {
-            v[i] = HashSet::new();
-        }
+        let v = (0usize..(grammar.len)).map(|_| HashSet::new()).collect();
         FirstSets { sets: v }
     }
 
@@ -302,6 +300,17 @@ pub fn compute_nullables(grammar: &Grammar) -> HashSet<Symbol> {
     )
 }
 
+/// First sets algorithm :
+/// - Create a collection storing empty sets for every not terminal
+/// - Iterate over all the rules on the grammar,
+/// - for a rule `a : b c d f g` we add the current value of First[b] to a,
+///  the if b can produce the empty word (is nullable) also add
+///  the First[c], repeat for c d f g until we found one of them
+///  not nullable or we get out of items.
+///  - First[Terminal] = {Terminal} ever!
+///  - Repeat until the process don't add new elements to any First set.
+/// We use the return to know if we mutated the First sets in this call.
+/// if we didn't, we got to the end of the algorithm.
 pub fn compute_first_sets_step(
     sets: &mut Vec<Rc<RefCell<HashSet<Symbol>>>>,
     nullables: &HashSet<Symbol>,
@@ -309,13 +318,21 @@ pub fn compute_first_sets_step(
 ) -> bool {
     // This tell us if we mutated [sets]
     let mut flag = false;
+    debug!("initial state: sets = {sets:?},  nullables = {nullables:?}",);
+    debug!("{grammar:?}");
     for (index, rule) in grammar.rules.iter().enumerate() {
+        debug!("loop principal: sets = {sets:?},  nullables = {nullables:?}, index = {index:?}",);
         let current_firsts = unsafe { sets.get_unchecked(index).clone() };
         for production in rule.productions.iter() {
             for item in production.values.iter() {
                 let item_firsts: &HashSet<Symbol> = match *item {
                     Symbol::Id(item_id) => unsafe {
-                        &(sets.get_unchecked(item_id).borrow())
+                        debug!(" adding first sets of item_id: {item_id:}");
+                        if is_terminal(item, grammar) {
+                            &HashSet::from([*item])
+                        } else {
+                            &(sets.get_unchecked(item_id).borrow())
+                        }
                     },
                     _ => &HashSet::from([*item]),
                 };
@@ -332,34 +349,28 @@ pub fn compute_first_sets_step(
                 }
             }
         }
-        sets.insert(index, current_firsts);
+        debug!("setting set at {index} with {current_firsts:?}");
+        sets[index] = current_firsts;
     }
     flag
 }
 
-//TODO: Add tests
-// - We need a function to map a ["name", ["symbol1","symbol2"]]
-//      to a FirstSets
-// - Modify macros and test to include
-// - We change the test aproach, we are going to test all the functions
-//   related to the grammars instead of by feature
 pub fn compute_first_sets(
     nullables: &HashSet<Symbol>,
     grammar: &Grammar,
 ) -> FirstSets {
-    let mut arg = Vec::with_capacity(grammar.len);
-    for i in 0usize..grammar.len {
-        arg[i] = Rc::new(RefCell::new(HashSet::new()));
-    }
+    let mut arg: Vec<_> = (0usize..(grammar.len))
+        .map(|_| Rc::new(RefCell::new(HashSet::new())))
+        .collect();
     loop {
         if !compute_first_sets_step(&mut arg, nullables, grammar) {
             break;
         }
     }
-    let mut out: Vec<HashSet<Symbol>> = Vec::with_capacity(arg.capacity());
-    for (index, value) in arg.into_iter().enumerate() {
-        out[index] = (*value).borrow().clone()
-    }
+    let out = arg
+        .into_iter()
+        .map(|value| (*value).borrow().clone())
+        .collect();
     FirstSets { sets: out }
 }
 
@@ -397,6 +408,15 @@ mod tests {
     use paste::paste;
     use test_grammars::*;
 
+    use simple_logger::SimpleLogger;
+    use std::sync::Once;
+
+    static INIT_LOG: Once = Once::new();
+
+    fn setup_log() {
+        INIT_LOG.call_once(|| SimpleLogger::new().init().unwrap());
+    }
+
     pub fn first_sets_from_vec(
         grammar: &Grammar,
         v: Vec<(&str, Vec<&str>)>,
@@ -428,6 +448,7 @@ mod tests {
 
             #[test]
             fn [< test_nullable_ $name >](){
+                setup_log();
                 let grammar = Grammar::from_vector($raw_grammar).expect("can't create grammar!");
                 let expected = grammar.registry.make_set($raw_nulls).expect("can't create expected set");
                 let nullables = compute_nullables(&grammar);
@@ -448,6 +469,7 @@ mod tests {
 
             #[test]
             fn [< test_ $name >](){
+                setup_log();
                 let grammar = &*$static_name;
                 let expected_nullables = grammar.registry.make_set($raw_nulls).expect("can't create expected set");
                 let nullables = compute_nullables(&grammar);
