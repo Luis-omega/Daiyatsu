@@ -264,16 +264,19 @@ impl FirstSets {
     pub fn readable<'a>(
         &self,
         grammar: &'a Grammar,
-    ) -> Option<HashMap<&'a String, HashSet<&'a String>>> {
+    ) -> Option<HashMap<String, HashSet<String>>> {
         let as_hash = self.into_hash_set();
         as_hash
             .iter()
             .map(|(name, set)| {
-                let new_name: &'a String =
-                    grammar.registry.solve_symbol(*name)?;
-                let new_set: HashSet<&'a String> = set
+                let new_name: String =
+                    grammar.registry.solve_symbol(*name)?.clone();
+                let new_set: HashSet<String> = set
                     .iter()
-                    .map(|x| grammar.registry.solve_symbol(*x))
+                    .map(|x| {
+                        let as_str_ref = grammar.registry.solve_symbol(*x)?;
+                        Some(as_str_ref.clone())
+                    })
                     .collect::<Option<_>>()?;
                 Some((new_name, new_set))
             })
@@ -355,40 +358,80 @@ pub fn compute_first_sets_step(
 ) -> bool {
     // This tell us if we mutated [sets]
     let mut flag = false;
-    debug!("initial state: sets = {sets:?},  nullables = {nullables:?}",);
-    debug!("{grammar:?}");
+    debug!(
+        "initial state : sets = {:?},  nullables = {:?}",
+        sets.iter()
+            .enumerate()
+            .map(|(index, x)| {
+                let set = (*x.borrow())
+                    .iter()
+                    .map(|&y| grammar.registry.solve_symbol(y))
+                    .collect::<Option<HashSet<_>>>()?;
+                let name = grammar.registry.solve_id(index)?;
+                Some((name, set))
+            })
+            .collect::<Option<HashMap<_, _>>>(),
+        nullables.readable(grammar),
+    );
+    debug!("{:}", grammar.to_string().expect("gramar.to_string error"));
     for (index, rule) in grammar.rules.iter().enumerate() {
-        debug!("loop principal: sets = {sets:?},  nullables = {nullables:?}, index = {index:?}",);
+        debug!(
+            "loop principal: sets = {:?},  nullables = {:?}, index = {:?}",
+            sets.iter()
+                .enumerate()
+                .map(|(index, x)| {
+                    let set = (*x.borrow())
+                        .iter()
+                        .map(|&y| grammar.registry.solve_symbol(y))
+                        .collect::<Option<HashSet<_>>>()?;
+                    let name = grammar.registry.solve_id(index)?;
+                    Some((name, set))
+                })
+                .collect::<Option<HashMap<_, _>>>(),
+            nullables.readable(grammar),
+            index
+        );
         let current_firsts = unsafe { sets.get_unchecked(index).clone() };
         for production in rule.productions.iter() {
+            let mut last_item_nullable = false;
             for item in production.values.iter() {
+                last_item_nullable = false;
                 let item_firsts: &HashSet<Symbol> = match *item {
                     Symbol::Id(item_id) => unsafe {
-                        debug!(" adding first sets of item_id: {item_id:}");
-                        // TODO: Critial, fixme, we can't return item = Empty
-                        // unless we are at the end of the loop
-                        // maybe add flag, is_nullable or something before the
-                        // loop, to control that?
+                        debug!(
+                            " adding first sets of item_id: {:?}",
+                            grammar.registry.solve_id(item_id)
+                        );
                         if is_terminal(item, grammar) {
-                            &HashSet::from([*item])
+                            if item.is_empty() {
+                                &HashSet::new()
+                            } else {
+                                &HashSet::from([*item])
+                            }
                         } else {
                             &(sets.get_unchecked(item_id).borrow())
                         }
                     },
                     _ => &HashSet::from([*item]),
                 };
-                let difference =
-                    item_firsts - &(*current_firsts.clone().borrow());
+                let difference = &(item_firsts
+                    - &(*current_firsts.clone().borrow()))
+                    - &HashSet::from([Symbol::Empty]);
                 if !difference.is_empty() {
                     flag = true;
                     let mut current_firsts_mut =
                         (&*current_firsts).borrow_mut();
                     current_firsts_mut.extend(difference);
                 }
-                //TODO: CRITICAL, fixme (empty must be added iff the rule is nullable)
                 if !nullables.sets.contains(item) {
                     break;
                 }
+                debug!("was nullable!");
+                last_item_nullable = true;
+            }
+            if last_item_nullable {
+                let mut current_firsts_mut = (&*current_firsts).borrow_mut();
+                current_firsts_mut.insert(Symbol::Empty);
             }
         }
         debug!("setting set at {index} with {current_firsts:?}");
@@ -440,7 +483,8 @@ pub mod test_grammars {
                 "s" : "a" "b" | "c",
                 "a" : "A" | "Empty",
                 "b" : "B" | "Empty",
-                "c" : "C"
+                "c" : "C",
+                "d" : "a" "c" | "c"
             }
             .expect("can't create grammar!")
         });
@@ -470,21 +514,17 @@ mod tests {
         INIT_LOG.call_once(|| SimpleLogger::new().init().unwrap());
     }
 
-    pub fn first_sets_from_vec(
-        grammar: &Grammar,
-        v: Vec<(&str, Vec<&str>)>,
-    ) -> Option<HashMap<Symbol, HashSet<Symbol>>> {
+    pub fn first_sets_from_vec<'a>(
+        v: Vec<(&'a str, Vec<&'a str>)>,
+    ) -> HashMap<String, HashSet<String>> {
         v.into_iter()
             .map(|(name, name_dic)| {
-                let name_symbol =
-                    grammar.registry.solve_name(&String::from(name))?;
-                let hash_dic = name_dic
-                    .into_iter()
-                    .map(|x| grammar.registry.solve_name(&String::from(x)))
-                    .collect::<Option<HashSet<Symbol>>>()?;
-                Some((name_symbol, hash_dic))
+                let new_name = String::from(name);
+                let hash_dic =
+                    name_dic.into_iter().map(|x| String::from(x)).collect();
+                (new_name, hash_dic)
             })
-            .collect::<Option<HashMap<Symbol, HashSet<Symbol>>>>()
+            .collect::<HashMap<String, HashSet<String>>>()
     }
 
     macro_rules! make_first_sets {
@@ -532,8 +572,8 @@ mod tests {
                     nullables.readable(&grammar),
                     expected_nullables.readable(&grammar),
                 );
-                let first_sets_as_hash = compute_first_sets(&nullables, grammar).into_hash_set();
-                let expected_firsts = first_sets_from_vec(grammar, $raw_first).expect("cant compute first sets");
+                let first_sets_as_hash = compute_first_sets(&nullables, grammar).readable(grammar).expect("can't create first set");
+                let expected_firsts = first_sets_from_vec($raw_first);
                 assert!(
                     first_sets_as_hash == expected_firsts,
                     "first_sets_as_hash = {:?}, expected = {:?}",
@@ -589,7 +629,7 @@ mod tests {
     make_test_from_static!(
         empty_produciton_grammar,
         EMPTY_PRODUCTION_GRAMMAR,
-        vec!["s", "a", "b", "Empy"],
-        make_first_sets!["s": "" "A" "B" "C" "Empty", "a": "Empty" "A", "b":"B" "Empty", "c":"C"]
+        vec!["s", "a", "b", "Empty"],
+        make_first_sets!["s": "A" "B" "C" "Empty", "a": "Empty" "A", "b":"B" "Empty", "c":"C", "d":"A" "C"]
     );
 }
