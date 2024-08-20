@@ -219,6 +219,23 @@ impl Grammar {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct NullableSets {
+    sets: HashSet<Symbol>,
+}
+
+impl NullableSets {
+    pub fn readable<'a>(
+        &self,
+        grammar: &'a Grammar,
+    ) -> Option<HashSet<&'a String>> {
+        self.sets
+            .iter()
+            .map(|x| grammar.registry.solve_symbol(*x))
+            .collect()
+    }
+}
+
 /// The computed First Sets for every non terminal
 /// in a [Grammar], that's why [new] require
 /// a [Grammar].
@@ -240,6 +257,25 @@ impl FirstSets {
             .map(|(name_id, hash_set)| {
                 let symbol = Symbol::Id(name_id);
                 (symbol, hash_set.clone())
+            })
+            .collect()
+    }
+
+    pub fn readable<'a>(
+        &self,
+        grammar: &'a Grammar,
+    ) -> Option<HashMap<&'a String, HashSet<&'a String>>> {
+        let as_hash = self.into_hash_set();
+        as_hash
+            .iter()
+            .map(|(name, set)| {
+                let new_name: &'a String =
+                    grammar.registry.solve_symbol(*name)?;
+                let new_set: HashSet<&'a String> = set
+                    .iter()
+                    .map(|x| grammar.registry.solve_symbol(*x))
+                    .collect::<Option<_>>()?;
+                Some((new_name, new_set))
             })
             .collect()
     }
@@ -293,11 +329,12 @@ pub fn compute_nullables_step(
 }
 
 /// The [Symbol::Empty] is always included.
-pub fn compute_nullables(grammar: &Grammar) -> HashSet<Symbol> {
-    grammar.transitive_closure(
+pub fn compute_nullables(grammar: &Grammar) -> NullableSets {
+    let sets = grammar.transitive_closure(
         || HashSet::from([Symbol::Empty]),
         compute_nullables_step,
-    )
+    );
+    NullableSets { sets }
 }
 
 /// First sets algorithm :
@@ -313,7 +350,7 @@ pub fn compute_nullables(grammar: &Grammar) -> HashSet<Symbol> {
 /// if we didn't, we got to the end of the algorithm.
 pub fn compute_first_sets_step(
     sets: &mut Vec<Rc<RefCell<HashSet<Symbol>>>>,
-    nullables: &HashSet<Symbol>,
+    nullables: &NullableSets,
     grammar: &Grammar,
 ) -> bool {
     // This tell us if we mutated [sets]
@@ -328,6 +365,10 @@ pub fn compute_first_sets_step(
                 let item_firsts: &HashSet<Symbol> = match *item {
                     Symbol::Id(item_id) => unsafe {
                         debug!(" adding first sets of item_id: {item_id:}");
+                        // TODO: Critial, fixme, we can't return item = Empty
+                        // unless we are at the end of the loop
+                        // maybe add flag, is_nullable or something before the
+                        // loop, to control that?
                         if is_terminal(item, grammar) {
                             &HashSet::from([*item])
                         } else {
@@ -344,7 +385,8 @@ pub fn compute_first_sets_step(
                         (&*current_firsts).borrow_mut();
                     current_firsts_mut.extend(difference);
                 }
-                if !nullables.contains(item) {
+                //TODO: CRITICAL, fixme (empty must be added iff the rule is nullable)
+                if !nullables.sets.contains(item) {
                     break;
                 }
             }
@@ -356,7 +398,7 @@ pub fn compute_first_sets_step(
 }
 
 pub fn compute_first_sets(
-    nullables: &HashSet<Symbol>,
+    nullables: &NullableSets,
     grammar: &Grammar,
 ) -> FirstSets {
     let mut arg: Vec<_> = (0usize..(grammar.len))
@@ -391,6 +433,17 @@ pub mod test_grammars {
     pub static EMPTY_GRAMMAR: LazyLock<Grammar> = LazyLock::new(|| {
         Grammar::from_vector(vec![]).expect("can't create grammar!")
     });
+
+    pub static EMPTY_PRODUCTION_GRAMMAR: LazyLock<Grammar> =
+        LazyLock::new(|| {
+            make_grammar! {
+                "s" : "a" "b" | "c",
+                "a" : "A" | "Empty",
+                "b" : "B" | "Empty",
+                "c" : "C"
+            }
+            .expect("can't create grammar!")
+        });
 
     pub static MATH_GRAMMAR: LazyLock<Grammar> = LazyLock::new(|| {
         make_grammar! {
@@ -450,13 +503,13 @@ mod tests {
             fn [< test_nullable_ $name >](){
                 setup_log();
                 let grammar = Grammar::from_vector($raw_grammar).expect("can't create grammar!");
-                let expected = grammar.registry.make_set($raw_nulls).expect("can't create expected set");
+                let expected = NullableSets{sets:grammar.registry.make_set($raw_nulls).expect("can't create expected set")};
                 let nullables = compute_nullables(&grammar);
                 assert!(
                     nullables == expected,
                     "nullables = {:?}, expected = {:?}",
-                    nullables,
-                    expected
+                    nullables.readable(&grammar),
+                    expected.readable(&grammar),
                 )
                 }
             }
@@ -471,19 +524,19 @@ mod tests {
             fn [< test_ $name >](){
                 setup_log();
                 let grammar = &*$static_name;
-                let expected_nullables = grammar.registry.make_set($raw_nulls).expect("can't create expected set");
+                let expected_nullables = NullableSets{sets:grammar.registry.make_set($raw_nulls).expect("can't create expected set")};
                 let nullables = compute_nullables(&grammar);
                 assert!(
                     nullables == expected_nullables,
                     "nullables = {:?}, expected = {:?}",
-                    nullables,
-                    expected_nullables
+                    nullables.readable(&grammar),
+                    expected_nullables.readable(&grammar),
                 );
                 let first_sets_as_hash = compute_first_sets(&nullables, grammar).into_hash_set();
                 let expected_firsts = first_sets_from_vec(grammar, $raw_first).expect("cant compute first sets");
                 assert!(
                     first_sets_as_hash == expected_firsts,
-                    "nullables = {:?}, expected = {:?}",
+                    "first_sets_as_hash = {:?}, expected = {:?}",
                     first_sets_as_hash,
                     expected_firsts
                 )
@@ -531,5 +584,12 @@ mod tests {
         MATH_GRAMMAR,
         vec!["Empty"],
         make_first_sets!["expr": "LParen" "Nat", "factor": "LParen" "Nat","atom":"LParen" "Nat"]
+    );
+
+    make_test_from_static!(
+        empty_produciton_grammar,
+        EMPTY_PRODUCTION_GRAMMAR,
+        vec!["s", "a", "b", "Empy"],
+        make_first_sets!["s": "" "A" "B" "C" "Empty", "a": "Empty" "A", "b":"B" "Empty", "c":"C"]
     );
 }
