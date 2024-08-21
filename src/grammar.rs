@@ -5,7 +5,7 @@ use std::{
     usize,
 };
 
-use crate::symbols::Symbol;
+use crate::symbols::{self, Symbol};
 use crate::{one_or_more::OneOrMore, symbols::SymbolsRegistry};
 
 use log::debug;
@@ -48,7 +48,7 @@ impl Production {
         }
     }
 
-    pub fn to_string(&self, table: &SymbolsRegistry) -> Option<String> {
+    pub fn readable(&self, table: &SymbolsRegistry) -> Option<String> {
         let name = table.solve_id(self.name)?;
         let productions: Vec<&str> = self
             .values
@@ -111,11 +111,11 @@ impl Rule {
         }
     }
 
-    pub fn to_string(&self, table: &SymbolsRegistry) -> Option<String> {
+    pub fn readable(&self, table: &SymbolsRegistry) -> Option<String> {
         let acc: Vec<String> = self
             .productions
             .iter()
-            .map(|i| i.to_string(table))
+            .map(|i| i.readable(table))
             .collect::<Option<Vec<_>>>()?;
         Some(acc.join(";\n"))
     }
@@ -209,13 +209,54 @@ impl Grammar {
         Grammar::from_table(&dic)
     }
 
-    pub fn to_string(&self) -> Option<String> {
+    pub fn readable(&self) -> Option<String> {
         let acc: Vec<String> = self
             .rules
             .iter()
-            .map(|i| i.to_string(&self.registry))
+            .map(|i| i.readable(&self.registry))
             .collect::<Option<Vec<_>>>()?;
         Some(acc.join("\n"))
+    }
+
+    #[inline]
+    pub fn is_terminal(&self, name: &Symbol) -> bool {
+        match *name {
+            Symbol::Id(x) => (self.len) <= x,
+            _ => true,
+        }
+    }
+
+    pub fn solve_name(&self, name: &String) -> Option<Symbol> {
+        self.registry.solve_name(name)
+    }
+
+    pub fn solve_id(&self, name_id: usize) -> Option<&String> {
+        self.registry.solve_id(name_id)
+    }
+
+    pub fn solve_symbol(&self, symbol: Symbol) -> Option<&String> {
+        self.registry.solve_symbol(symbol)
+    }
+
+    pub fn solve_symbols<'a, T: Iterator<Item = &'a Symbol>>(
+        &'a self,
+        symbols: T,
+    ) -> impl Iterator<Item = Option<&'a String>> {
+        symbols.into_iter().map(|&x| self.solve_symbol(x))
+    }
+
+    pub fn solve_ids<'a, T: Iterator<Item = usize>>(
+        &'a self,
+        symbols: T,
+    ) -> impl Iterator<Item = Option<&'a String>> {
+        symbols.into_iter().map(|x| self.solve_id(x))
+    }
+
+    pub fn solve_names<'a, T: Iterator<Item = &'a String> + 'a>(
+        &'a self,
+        symbols: T,
+    ) -> impl Iterator<Item = Option<Symbol>> + 'a {
+        symbols.into_iter().map(|x| self.solve_name(x))
     }
 }
 
@@ -226,13 +267,10 @@ pub struct NullableSets {
 
 impl NullableSets {
     pub fn readable<'a>(
-        &self,
+        &'a self,
         grammar: &'a Grammar,
     ) -> Option<HashSet<&'a String>> {
-        self.sets
-            .iter()
-            .map(|x| grammar.registry.solve_symbol(*x))
-            .collect()
+        grammar.solve_symbols(self.sets.iter()).collect()
     }
 }
 
@@ -262,22 +300,16 @@ impl FirstSets {
     }
 
     pub fn readable<'a>(
-        &self,
+        &'a self,
         grammar: &'a Grammar,
-    ) -> Option<HashMap<String, HashSet<String>>> {
-        let as_hash = self.into_hash_set();
-        as_hash
+    ) -> Option<HashMap<&'a String, HashSet<&'a String>>> {
+        self.sets
             .iter()
+            .enumerate()
             .map(|(name, set)| {
-                let new_name: String =
-                    grammar.registry.solve_symbol(*name)?.clone();
-                let new_set: HashSet<String> = set
-                    .iter()
-                    .map(|x| {
-                        let as_str_ref = grammar.registry.solve_symbol(*x)?;
-                        Some(as_str_ref.clone())
-                    })
-                    .collect::<Option<_>>()?;
+                let new_name: &String = grammar.solve_id(name)?;
+                let new_set: HashSet<&'a String> =
+                    grammar.solve_symbols(set.iter()).collect::<Option<_>>()?;
                 Some((new_name, new_set))
             })
             .collect()
@@ -287,14 +319,6 @@ impl FirstSets {
 impl Into<HashMap<Symbol, HashSet<Symbol>>> for FirstSets {
     fn into(self) -> HashMap<Symbol, HashSet<Symbol>> {
         self.into_hash_set()
-    }
-}
-
-#[inline]
-pub fn is_terminal(name: &Symbol, grammar: &Grammar) -> bool {
-    match *name {
-        Symbol::Id(x) => (grammar.len) <= x,
-        _ => true,
     }
 }
 
@@ -312,7 +336,7 @@ pub fn compute_nullables_step(
         for production in rule.productions.iter() {
             let mut all_are_nullable = true;
             for item in production.values.iter() {
-                if (is_terminal(item, grammar) && item.is_empty())
+                if (grammar.is_terminal(item) && item.is_empty())
                     || nullables.contains(item)
                 {
                     continue;
@@ -365,7 +389,7 @@ pub fn compute_first_sets_step(
             .map(|(index, x)| {
                 let set = (*x.borrow())
                     .iter()
-                    .map(|&y| grammar.registry.solve_symbol(y))
+                    .map(|&y| grammar.solve_symbol(y))
                     .collect::<Option<HashSet<_>>>()?;
                 let name = grammar.registry.solve_id(index)?;
                 Some((name, set))
@@ -373,7 +397,7 @@ pub fn compute_first_sets_step(
             .collect::<Option<HashMap<_, _>>>(),
         nullables.readable(grammar),
     );
-    debug!("{:}", grammar.to_string().expect("gramar.to_string error"));
+    debug!("{:}", grammar.readable().expect("gramar.readable error"));
     for (index, rule) in grammar.rules.iter().enumerate() {
         debug!(
             "loop principal: sets = {:?},  nullables = {:?}, index = {:?}",
@@ -382,7 +406,7 @@ pub fn compute_first_sets_step(
                 .map(|(index, x)| {
                     let set = (*x.borrow())
                         .iter()
-                        .map(|&y| grammar.registry.solve_symbol(y))
+                        .map(|&y| grammar.solve_symbol(y))
                         .collect::<Option<HashSet<_>>>()?;
                     let name = grammar.registry.solve_id(index)?;
                     Some((name, set))
@@ -400,9 +424,9 @@ pub fn compute_first_sets_step(
                     Symbol::Id(item_id) => unsafe {
                         debug!(
                             " adding first sets of item_id: {:?}",
-                            grammar.registry.solve_id(item_id)
+                            grammar.solve_id(item_id)
                         );
-                        if is_terminal(item, grammar) {
+                        if grammar.is_terminal(item) {
                             if item.is_empty() {
                                 &HashSet::new()
                             } else {
@@ -630,6 +654,6 @@ mod tests {
         empty_produciton_grammar,
         EMPTY_PRODUCTION_GRAMMAR,
         vec!["s", "a", "b", "Empty"],
-        make_first_sets!["s": "A" "B" "C" "Empty", "a": "Empty" "A", "b":"B" "Empty", "c":"C", "d":"A" "C"]
+        make_first_sets!["s": "A" "B" "C" "Empty", "a": "Empty" "A", "b":"B" "Empty", "c":"C", "d":"A" "E"]
     );
 }
