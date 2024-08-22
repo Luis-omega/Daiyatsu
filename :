@@ -5,7 +5,7 @@ use std::{
     usize,
 };
 
-use crate::symbols::Symbol;
+use crate::symbols::{self, Symbol};
 use crate::{one_or_more::OneOrMore, symbols::SymbolsRegistry};
 
 use log::debug;
@@ -300,14 +300,14 @@ impl FirstSets {
     }
 
     pub fn readable<'a>(
-        &'a self,
+        &self,
         grammar: &'a Grammar,
     ) -> Option<HashMap<&'a String, HashSet<&'a String>>> {
         self.sets
             .iter()
             .enumerate()
             .map(|(name, set)| {
-                let new_name: &String = grammar.solve_id(name)?;
+                let new_name: &String = grammar.solve_symbol(name)?;
                 let new_set: HashSet<&'a String> =
                     grammar.solve_symbols(set.iter()).collect::<Option<_>>()?;
                 Some((new_name, new_set))
@@ -389,7 +389,7 @@ pub fn compute_first_sets_step(
             .map(|(index, x)| {
                 let set = (*x.borrow())
                     .iter()
-                    .map(|&y| grammar.solve_symbol(y))
+                    .map(|&y| grammar.registry.solve_symbol(y))
                     .collect::<Option<HashSet<_>>>()?;
                 let name = grammar.registry.solve_id(index)?;
                 Some((name, set))
@@ -406,7 +406,7 @@ pub fn compute_first_sets_step(
                 .map(|(index, x)| {
                     let set = (*x.borrow())
                         .iter()
-                        .map(|&y| grammar.solve_symbol(y))
+                        .map(|&y| grammar.registry.solve_symbol(y))
                         .collect::<Option<HashSet<_>>>()?;
                     let name = grammar.registry.solve_id(index)?;
                     Some((name, set))
@@ -424,7 +424,7 @@ pub fn compute_first_sets_step(
                     Symbol::Id(item_id) => unsafe {
                         debug!(
                             " adding first sets of item_id: {:?}",
-                            grammar.solve_id(item_id)
+                            grammar.registry.solve_id(item_id)
                         );
                         if grammar.is_terminal(item) {
                             if item.is_empty() {
@@ -551,16 +551,6 @@ mod tests {
             .collect::<HashMap<String, HashSet<String>>>()
     }
 
-    pub fn to_references<'a>(
-        h: &'a HashMap<String, HashSet<String>>,
-    ) -> HashMap<&'a String, HashSet<&'a String>> {
-        h.into_iter()
-            .map(|(name_ref, set_ref)| {
-                (name_ref, set_ref.into_iter().map(|item| item).collect())
-            })
-            .collect()
-    }
-
     macro_rules! make_first_sets {
         ($($name:literal : $($item:literal)* ),*) => {
             {
@@ -606,13 +596,12 @@ mod tests {
                     nullables.readable(&grammar),
                     expected_nullables.readable(&grammar),
                 );
-                let first_sets_as_hash = compute_first_sets(&nullables, grammar);
-                let first_sets_to_compare = first_sets_as_hash.readable(grammar).expect("can't create first set");
+                let first_sets_as_hash = compute_first_sets(&nullables, grammar).readable(grammar).expect("can't create first set");
                 let expected_firsts = first_sets_from_vec($raw_first);
                 assert!(
-                    first_sets_to_compare == to_references(&expected_firsts),
-                    "first_sets_to_compare = {:?}, expected = {:?}",
-                    first_sets_to_compare,
+                    first_sets_as_hash == expected_firsts,
+                    "first_sets_as_hash = {:?}, expected = {:?}",
+                    first_sets_as_hash,
                     expected_firsts
                 )
 
@@ -665,6 +654,6 @@ mod tests {
         empty_produciton_grammar,
         EMPTY_PRODUCTION_GRAMMAR,
         vec!["s", "a", "b", "Empty"],
-        make_first_sets!["s": "A" "B" "C" "Empty", "a": "Empty" "A", "b":"B" "Empty", "c":"C", "d":"A" "C"]
+        make_first_sets!["s": "A" "B" "C" "Empty", "a": "Empty" "A", "b":"B" "Empty", "c":"C", "d":"A" "E"]
     );
 }
